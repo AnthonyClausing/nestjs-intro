@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from 'mongoose';
 import { Product } from "./products.model";
 
 @Injectable()
@@ -6,30 +8,45 @@ export class ProductsService {
     // add private so products array is only available to the service
     // and service methods are the only thing that can interact with it
     private products: Product[] = [];
-    
-    private findProduct(productId:string) {
-        return this.products.find(prod => prod.id === productId)
+    constructor(@InjectModel('Product') private readonly productModel: Model<Product>) {
+        // this.products = [
+        //     new Product('1', 'First Product', 'This is the first product', 100),
+        //     new Product('2', 'Second Product', 'This is the second product', 200),
+        //     new Product('3', 'Third Product', 'This is the third product', 300),
+        // ];
     }
-    getProducts(): Product[] {
-        return [...this.products];
+    private transformProduct(product: Product): Product {
+        return {
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price
+        } as Product;
     }
-    getSingleProduct(productId: string): Product {
-        const product = this.findProduct(productId);
-        if(!product) {
-            // can not just throw new Error, for nestsjs need to use the Exception classes
-            throw new NotFoundException('Product not found');
+    private async findProduct(productId:string): Promise<Product> {
+        const product = await this.productModel.findById(productId).exec();
+        return product;
+    }
+
+    async getProducts(): Promise<Product[]> {
+        const products = await this.productModel.find().exec();
+        return products.map(prod => this.transformProduct(prod));
+    }
+    async getSingleProduct(productId: string): Promise<Product> {
+        try {
+            const product = await this.findProduct(productId);
+            return this.transformProduct(product);
+        } catch(e:any){
+            throw new NotFoundException('Could not find product');
         }
-        return {...product};
     }
-    insertProduct(title: string, description: string, price: number) {
-        const prodId = new Date().valueOf().toString(); //not perfect, you could create two products with the same id, but for this demo, a date string is fine
-        const newProduct = new Product(prodId, title, description, price);
-        this.products.push(newProduct);
-        return newProduct;
+    async insertProduct(title: string, description: string, price: number) {
+        const newProduct = new this.productModel({title, description, price});
+        const result = await newProduct.save();
+        return this.transformProduct(result);
     }
-    updateProduct(productId: string, title?: string, description?: string, price?: number) {
-        const product= this.findProduct(productId);
-        const updatedProduct = {...product};
+    async updateProduct(productId: string, title?: string, description?: string, price?: number) {
+        const updatedProduct= await this.findProduct(productId);
         if(title) {
             updatedProduct.title = title;
         }
@@ -39,12 +56,13 @@ export class ProductsService {
         if(price) {
             updatedProduct.price = price;
         }
-        this.products = this.products.map(prod => prod.id === productId ? updatedProduct : prod);
-        return updatedProduct;
+        updatedProduct.save()
     }
-    deleteProduct(productId: string) {
-        const product = this.findProduct(productId);
-        this.products = this.products.filter(prod => prod.id !== productId);
-        return {...product};
+    async deleteProduct(productId: string) {
+        const result = await this.productModel.deleteOne({_id: productId}).exec();
+        console.log(result)
+        if(result.deletedCount === 0) {
+            throw new NotFoundException('Could not find product');
+        }
     }
 }
